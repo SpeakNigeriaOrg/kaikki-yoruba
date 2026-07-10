@@ -1,0 +1,15 @@
+{
+  "name": "kaikki-yoruba",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared Kaikki/Wiktionary normalization for Yoruba, feeding both yorubadict and yoruba_student_dict_platform - one canonical artifact, no runtime dependencies.",
+  "scripts": {
+    "build": "node src/normalize.mjs",
+    "build:sample": "node src/normalize.mjs data/sample.jsonl",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

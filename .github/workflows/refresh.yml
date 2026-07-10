@@ -1,0 +1,47 @@
+name: Refresh Kaikki lexicon
+
+on:
+  schedule:
+    # Weekly - matches kaikki.org's own "updated regularly (usually at
+    # least once a week)" cadence for its main English-Wiktionary-based
+    # extraction (which dictionary-Yoruba.jsonl is filtered from).
+    - cron: '0 6 * * 1'
+  workflow_dispatch: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fetch latest Yoruba-filtered Kaikki extract
+        run: |
+          # TODO (open item, see README): the exact download URL for a
+          # Yoruba-filtered slice of kaikki.org's main dataset was not
+          # confirmed during design - kaikki.org's per-language "editions"
+          # page (downloads/[lang]/[lang]-extract.jsonl) does NOT include
+          # Yoruba (that page is for separate non-English-Wiktionary
+          # editions). The current dictionary-Yoruba.jsonl in both
+          # yoruba-student-dict and yorubadict was obtained via kaikki.org's
+          # per-word/per-language query feature against the main
+          # English-Wiktionary dataset - confirm the exact URL/mechanism
+          # against https://kaikki.org/dictionary/Yoruba/ before relying on
+          # this step, then replace the placeholder below.
+          echo "::error::Fetch URL not yet confirmed - see TODO in this step" && exit 1
+          # curl -fsSL "<CONFIRM-AND-REPLACE>" -o data/dictionary-Yoruba.jsonl
+
+      - name: Normalize
+        run: node src/normalize.mjs data/dictionary-Yoruba.jsonl --source-date="$(date -u +%F)"
+
+      - name: Publish canonical artifact
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Kaikki Yoruba build ${{ github.run_number }}
+          files: |
+            dist/entries.json
+            dist/metadata.json
