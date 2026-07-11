@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 // src/normalize.mjs
 //
-// Orchestrator for this repo's ONLY job: Kaikki JSONL -> Parser ->
-// Normalizer -> canonical artifact. Deliberately stops there - reciprocal
-// relationship synthesis, validation reporting, and search-index building
-// are each consumer's own specialized concern (yorubadict's
-// build/lib/{relationships,validator,search-index}.mjs stay in yorubadict;
-// yoruba_student_dict_platform's componentCandidates/altOfTargets/
-// standardForms derivation stays in its own ingestion step) - see this
-// repo's README for the full rationale.
+// Orchestrator: Kaikki JSONL -> Parser -> Normalizer -> morpheme resolution
+// -> canonical artifact. Mostly stops there - reciprocal relationship
+// synthesis for derivedTerms/relatedTerms/synonyms/antonyms/descendants,
+// validation reporting, and search-index building are each consumer's own
+// specialized concern (yorubadict's build/lib/{relationships,validator,
+// search-index}.mjs stay in yorubadict; yoruba_student_dict_platform's
+// componentCandidates/altOfTargets/standardForms derivation stays in its
+// own ingestion step). The one exception is etymology-morpheme resolution
+// (lib/morphemeResolution.mjs) - genuinely self-contained given just
+// entries + their etymologyMorphemes, and previously duplicated (with the
+// same two bugs) across both downstream consumers - see this repo's
+// README for the full rationale.
 //
 // Usage:
 //   node src/normalize.mjs [path-to-jsonl] [--source-date=YYYY-MM-DD]
@@ -27,6 +31,7 @@ import path from 'node:path';
 
 import { parseJsonl } from './lib/parser.mjs';
 import { normalizeRecords } from './lib/normalizer.mjs';
+import { resolveMorphemeRelationships } from './lib/morphemeResolution.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -43,7 +48,7 @@ const outEntriesPath = path.join(outDir, 'entries.json');
 const outMetadataPath = path.join(outDir, 'metadata.json');
 
 function main() {
-  console.log(`[1/2] Parsing ${path.relative(rootDir, inputPath)} ...`);
+  console.log(`[1/3] Parsing ${path.relative(rootDir, inputPath)} ...`);
   const { records, errors: parseErrors } = parseJsonl(inputPath);
   console.log(`      ${records.length} records parsed, ${parseErrors.length} parse errors`);
   if (parseErrors.length > 0) {
@@ -52,8 +57,11 @@ function main() {
     }
   }
 
-  console.log('[2/2] Normalizing records into canonical entries ...');
+  console.log('[2/3] Normalizing records into canonical entries ...');
   const entries = normalizeRecords(records);
+
+  console.log('[3/3] Resolving etymology-morpheme relationships ...');
+  resolveMorphemeRelationships(entries);
 
   // Entries are shipped as an id-keyed object for O(1) lookup, matching
   // yorubadict's own convention for its equivalent artifact.

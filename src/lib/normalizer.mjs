@@ -1,21 +1,77 @@
 // src/lib/normalizer.mjs
 //
 // Lifted from yorubadict's build/lib/normalizer.mjs (Stage 2: converts one
-// raw Kaikki record into one canonical lexical entry), extended with two
-// additional raw fields yorubadict's own normalizer doesn't currently keep
-// but yoruba_student_dict_platform's downstream ingestion needs:
-//   - etymologyTemplates: raw etymology_templates, needed to derive
-//     componentCandidates (etymological decomposition) the same way
-//     yoruba-student-dict's generate_kaikki_lexicon.py already does.
+// raw Kaikki record into one canonical lexical entry), extended with fields
+// yorubadict's own normalizer didn't originally keep but downstream
+// consumers need:
+//   - etymologyTemplates: raw etymology_templates, kept unfiltered - needed
+//     by yoruba_student_dict_platform's componentCandidates derivation.
 //   - senses[].altOf: raw alt_of, needed to derive altOfTargets
 //     (cross-reference following) the same way.
-// Both are raw, unopinionated additions - no new derived semantics, just
-// preserving Kaikki fields this normalizer was already discarding. Every
-// inferred value still records its inference method, confidence, and the
-// original source value - original data is never discarded, only
+//   - etymologyMorphemes: unlike the two above, this ISN'T raw passthrough -
+//     it's the corrected per-morpheme extraction (which template names
+//     count, per-morpheme bound/free filtering) originally built and fixed
+//     in yorubadict's own normalizer.mjs. Both yorubadict's independent copy
+//     and yoruba_student_dict_platform's separate TS port shared the same
+//     two bugs (missing af/affix/prefix, an all-or-nothing hyphen check)
+//     until this was fixed once, here - see README for the full rationale
+//     on why this crossed the line from "raw preservation" to "shared
+//     derivation," while the cross-entry RESOLUTION of these morphemes
+//     (which specific entry a free morpheme's spelling matches) still
+//     happens in morphemeResolution.mjs, not here.
+// Every inferred value still records its inference method, confidence, and
+// the original source value - original data is never discarded, only
 // supplemented.
 
 import { allForms } from './orthography.mjs';
+
+// Templates whose numeric args decompose a word into its constituent
+// morphemes. "af"/"affix"/"prefix" were previously excluded entirely on
+// the assumption they only ever mark a single bound prefix - real data
+// disproves that: of 1,043 real af/affix templates in the corpus, 100%
+// have 2+ numeric args, and 388 (37%) have 3-6, mixing bound prefixes
+// with several free-standing real words (e.g. àmọ̀tẹ́kùn = à- + mọ̀ + tó +
+// tó + ẹkùn). Cross-language templates (cog/bor/inh/der/doublet/calque)
+// are excluded by design - their numeric arg is a language code, not a
+// Yoruba word - and non-decomposition relations (clipping, etymid, etc.)
+// are simply not in this set. Originally built and fixed in yorubadict's
+// build/lib/normalizer.mjs; ported here so both consumers get the
+// correction without re-deriving it independently (see README).
+const MORPHEME_TEMPLATE_NAMES = new Set([
+  'compound', 'com', 'compound+', 'reduplication', 'blend',
+  'af', 'affix', 'prefix',
+]);
+
+/** Extracts every morpheme a word's etymology_templates decompose it
+ * into, tagging each as bound (a grammatical prefix/suffix like à-, ẹ- -
+ * never an independent word) or free (a real word, potentially already in
+ * this dictionary). This is a PER-MORPHEME filter, not per-template: a
+ * template mixing one bound prefix with several free words (the common
+ * real shape for af/affix) keeps all its free morphemes rather than
+ * discarding the whole template because of the one bound one. */
+function extractEtymologyMorphemes(record) {
+  const templates = Array.isArray(record.etymology_templates) ? record.etymology_templates : [];
+  const morphemes = [];
+  for (const t of templates) {
+    if (!MORPHEME_TEMPLATE_NAMES.has(t.name)) continue;
+    const args = t.args || {};
+    if (args['1'] !== 'yo') continue;
+    const numericKeys = Object.keys(args)
+      .filter((k) => /^\d+$/.test(k) && k !== '1')
+      .sort((a, b) => Number(a) - Number(b));
+    numericKeys.forEach((key, i) => {
+      const form = args[key];
+      if (!form) return;
+      // Glosses are keyed by POSITION in the content-morpheme sequence
+      // (t1, t2, ...), not by the raw arg number - confirmed against real
+      // data: àmọ̀tẹ́kùn's 5 morphemes are args 2-6, but their glosses are
+      // t1-t5 (one per morpheme, in order), not t2-t6.
+      const gloss = args[`t${i + 1}`] || null;
+      morphemes.push({ form, gloss, bound: form.startsWith('-') || form.endsWith('-') });
+    });
+  }
+  return morphemes;
+}
 
 function pickCanonicalForm(record) {
   const forms = Array.isArray(record.forms) ? record.forms : [];
@@ -166,6 +222,7 @@ export function normalizeRecord(record, index) {
     etymologyNumber: record.etymology_number || null,
     etymologyText: record.etymology_text || null,
     etymologyTemplates: extractEtymologyTemplates(record),
+    etymologyMorphemes: extractEtymologyMorphemes(record),
     canonicalForm,
     altForms: extractAltForms(record, canonicalForm.value),
     ipa: extractIpa(record),

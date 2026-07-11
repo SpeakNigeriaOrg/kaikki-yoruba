@@ -84,6 +84,51 @@ test('normalizeRecords on the real sample fixture produces 16 entries, all with 
   }
 });
 
+test('normalizeRecord extracts etymologyMorphemes, tagging bound vs free per-morpheme (not per-template)', () => {
+  const record = {
+    word: 'àmọ̀tẹ́kùn',
+    pos: 'noun',
+    senses: [{ id: 's1', glosses: ['leopard'] }],
+    etymology_templates: [
+      {
+        name: 'af',
+        args: {
+          1: 'yo', 2: 'à-', 3: 'mọ̀', 4: 'tó', 5: 'tó', 6: 'ẹkùn',
+          t1: 'nominalizing prefix', t2: 'to know', t3: 'that', t4: 'is equal to, similar to', t5: 'leopard',
+        },
+      },
+    ],
+  };
+  const entry = normalizeRecord(record, 0);
+  assert.deepEqual(entry.etymologyMorphemes, [
+    { form: 'à-', gloss: 'nominalizing prefix', bound: true },
+    { form: 'mọ̀', gloss: 'to know', bound: false },
+    { form: 'tó', gloss: 'that', bound: false },
+    { form: 'tó', gloss: 'is equal to, similar to', bound: false },
+    { form: 'ẹkùn', gloss: 'leopard', bound: false },
+  ]);
+});
+
+test('normalizeRecord recognizes af/affix/prefix templates for etymologyMorphemes (previously wholesale excluded elsewhere)', () => {
+  for (const name of ['af', 'affix', 'prefix']) {
+    const record = {
+      word: 'x', pos: 'noun', senses: [{ id: 's1', glosses: ['thing'] }],
+      etymology_templates: [{ name, args: { 1: 'yo', 2: 'a-', 3: 'b' } }],
+    };
+    const entry = normalizeRecord(record, 0);
+    assert.equal(entry.etymologyMorphemes.length, 2, `expected ${name} template to be recognized`);
+  }
+});
+
+test('normalizeRecord excludes cross-language templates from etymologyMorphemes (numeric arg is a language code, not a Yoruba word)', () => {
+  const record = {
+    word: 'x', pos: 'noun', senses: [{ id: 's1', glosses: ['thing'] }],
+    etymology_templates: [{ name: 'cog', args: { 1: 'en', 2: 'something' } }],
+  };
+  const entry = normalizeRecord(record, 0);
+  assert.deepEqual(entry.etymologyMorphemes, []);
+});
+
 test('normalizeRecords on the real full Kaikki corpus finds real component-decomposition templates and real alt_of cross-references', () => {
   const realCorpusPath = path.resolve(__dirname, '..', '..', '..', 'yorubadict', 'data', 'dictionary-Yoruba.jsonl');
   let records;
