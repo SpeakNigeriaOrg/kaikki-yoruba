@@ -7,6 +7,74 @@ dictionary website) and
 curation platform for a student dictionary/curriculum, cross-checked
 against Kaikki as a reference source).
 
+## What this is, in plain terms
+
+[Kaikki](https://kaikki.org) is a project that extracts Wiktionary's
+dictionary content into clean, machine-readable data - instead of the raw
+wiki-markup Wiktionary pages are actually written in, Kaikki publishes one
+JSON object per dictionary entry, as a plain text file where each line is
+one entry (this format is called **JSONL** - "JSON Lines"). We use the
+slice of that data covering Yoruba words, currently 6,273 entries.
+
+But Kaikki's raw JSON is still messy and inconsistent in places - a word's
+"real" spelling isn't always tagged the same way twice, cross-references
+point at other words by plain text rather than a stable link, and useful
+data is scattered across differently-shaped fields depending on the entry.
+**"Normalizing" here means taking each of those raw, inconsistent records
+and rewriting it into one predictable, consistent shape** - same fields,
+same structure, every time - that other code can rely on without needing
+to know Kaikki's own quirks. Concretely, for one real (abbreviated) example,
+the raw Kaikki record for the letter "A":
+
+```json
+{
+  "word": "A", "pos": "character", "lang_code": "yo",
+  "forms": [{"form": "a", "tags": ["lowercase"]}],
+  "sounds": [{"ipa": "/a/", "tags": ["phoneme"]}],
+  "senses": [{"glosses": ["The first letter of the Yoruba alphabet..."], "tags": ["letter", "uppercase"]}]
+}
+```
+
+becomes this repo's normalized entry:
+
+```json
+{
+  "id": "en-A-yo-character-9n~aNY1j",
+  "headword": "A",
+  "lang": "Yoruba", "langCode": "yo", "pos": "character",
+  "canonicalForm": { "value": "A", "inferenceMethod": "fallback_headword", "confidence": 0.5, "originalValue": "A" },
+  "altForms": [{ "form": "a", "tags": ["lowercase"] }],
+  "ipa": [{ "ipa": "/a/", "tags": ["phoneme"], "note": null }],
+  "senses": [{ "glosses": ["The first letter of the Yoruba alphabet..."], "tags": ["letter", "uppercase"], "examples": [], "altOf": [] }],
+  "derivedTerms": [], "relatedTerms": [], "synonyms": [], "antonyms": [], "descendants": [],
+  "forms": { "exact": "A", "toneInsensitive": "a", "orthographyInsensitive": "a" }
+}
+```
+
+Same information, but now every entry - no matter how Kaikki happened to
+record it - has the same fields in the same shape, with every inferred
+value (like `canonicalForm` here, since this record had no explicit
+"canonical" tag to go on) recording *how* it was inferred, not just the
+result.
+
+### Final result: format and location
+
+The output of a run is two files:
+- **`entries.json`** - the actual dictionary data: a single JSON object
+  keyed by entry id, one normalized entry (shaped like the example above)
+  per Kaikki record. Currently ~7 MB for all 6,273 Yoruba entries.
+- **`metadata.json`** - a small summary of the run itself: when it ran,
+  how many entries, how many parse errors, and a content hash (so a
+  consumer can tell whether the data actually changed since last time).
+
+**Neither file lives in this repo's git history** - they're build output,
+regenerated fresh every run. Instead, each run of the scheduled workflow
+publishes them as the two file attachments on a new **GitHub Release**
+(visible under this repo's "Releases" on GitHub, one release per run,
+tagged `build-<run number>`). That's where the actual current data lives -
+`yorubadict` and `yoruba_student_dict_platform` are each meant to download
+the latest release's files, not clone this repo's history.
+
 ## Why this exists
 
 Both projects had their own independent Kaikki-processing pipeline, both
@@ -22,7 +90,7 @@ platform-only.
 ## What this repo owns - and deliberately does not
 
 This repo is Stage 1+2 only: **parse** raw Kaikki JSONL, **normalize** into
-one canonical entry per record. That's it.
+one canonical entry per record (the example above). That's it.
 
 The normalizer here is lifted close to verbatim from `yorubadict`'s own
 `build/lib/{parser,normalizer}.mjs` (functional code unchanged, only
@@ -71,9 +139,38 @@ npm test                   # node --test - runs against both a synthetic
                             # the real corpus in ../yorubadict/data/
 ```
 
-`dist/` is never committed - it's the build output, published as a
-versioned GitHub Release by the scheduled workflow
-(`.github/workflows/refresh.yml`).
+Real end-to-end run, exactly what the scheduled workflow does:
+
+```
+curl -fsSL "https://kaikki.org/dictionary/Yoruba/kaikki.org-dictionary-Yoruba.jsonl" -o data/dictionary-Yoruba.jsonl
+node src/normalize.mjs data/dictionary-Yoruba.jsonl --source-date="$(date -u +%F)"
+# -> dist/entries.json, dist/metadata.json
+```
+
+## How to trigger a real run / test it end-to-end
+
+The workflow (`.github/workflows/refresh.yml`) runs automatically every
+Monday, but you don't have to wait for that to test it:
+
+1. On GitHub, open this repo → **Actions** tab → **Refresh Kaikki lexicon**
+   (in the left sidebar) → **Run workflow** button (top right) → **Run
+   workflow** again to confirm. That's a manual trigger of the same
+   `workflow_dispatch` event the schedule uses.
+2. Watch the run: each step (fetch → sanity-check → normalize → publish)
+   shows its own log; the sanity-check step in particular prints the
+   fetched file's size/line count so you can see it's real data, not an
+   error page.
+3. On success, check this repo's **Releases** page (right sidebar on the
+   repo's main page, or `github.com/<org>/kaikki-yoruba/releases`) - a new
+   release tagged `build-<N>` should appear with `entries.json` and
+   `metadata.json` attached. That's the actual deliverable - download those
+   two files to confirm, or open `metadata.json` directly to see the run's
+   stats.
+
+If you have the `gh` CLI installed locally (it isn't available in this
+dev environment, so this hasn't been exercised): `gh workflow run
+refresh.yml` triggers the same thing from a terminal, and `gh run watch`
+follows the live log.
 
 ## Status
 
@@ -98,7 +195,9 @@ assuming it's transient. The workflow's fetch step is followed by a
 sanity-check step (file size/line count bounds, first-record shape check)
 before normalizing - verified locally to correctly pass on the real file
 and correctly fail on a truncated/error-page-sized response and on a
-right-sized-but-wrong-shape response.
+right-sized-but-wrong-shape response. The `contents: write` permission the
+release-publish step needs is declared directly in the workflow file, not
+left to a repo settings default.
 
 **Open items, not yet resolved:**
 - **Not yet integrated with either consumer.** `yorubadict`'s build hasn't
@@ -108,6 +207,5 @@ right-sized-but-wrong-shape response.
   standardForms derivation) hasn't been built yet either.
 - **The workflow itself hasn't had a real scheduled/dispatched run yet** -
   the fetch+sanity-check+normalize chain was verified by running each part
-  locally (see above), not by an actual GitHub Actions execution. Worth
-  triggering a manual `workflow_dispatch` run once pushed, to confirm the
-  release-publish step too.
+  locally (see "Status" above), not by an actual GitHub Actions execution.
+  See "How to trigger a real run" above.
