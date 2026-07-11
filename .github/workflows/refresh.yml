@@ -11,6 +11,14 @@ on:
 jobs:
   refresh:
     runs-on: ubuntu-latest
+    # Explicit, scoped to this job: the default GITHUB_TOKEN is read-only
+    # unless a repo/org's default workflow permissions are set to
+    # read/write - declaring it here means this workflow requests exactly
+    # what it needs (contents: write, for the release publish step below)
+    # regardless of that default, rather than depending on someone
+    # remembering to flip a repo settings toggle.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
