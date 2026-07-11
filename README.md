@@ -84,23 +84,30 @@ fixture and the real 6,273-record corpus (found 3,843 entries with real
 `compound+`/`reduplication`/`blend` - among them). 12/12 tests passing
 (`node --test`).
 
+**Resolved since the initial scaffold**: the fetch URL is confirmed live -
+`https://kaikki.org/dictionary/Yoruba/kaikki.org-dictionary-Yoruba.jsonl`
+(linked from `https://kaikki.org/dictionary/Yoruba/index.html`), verified
+by actually downloading it and running it through `src/normalize.mjs`
+end-to-end (6,273 records, 0 parse errors, real `etymologyTemplates`/
+`altOf` data present). kaikki.org's own page marks this specific link
+"DEPRECATED - will be removed in the near future" - if the scheduled
+workflow starts failing, check
+<https://kaikki.org/dictionary/Yoruba/index.html> and
+<https://kaikki.org/dictionary/rawdata.html> for its replacement before
+assuming it's transient. The workflow's fetch step is followed by a
+sanity-check step (file size/line count bounds, first-record shape check)
+before normalizing - verified locally to correctly pass on the real file
+and correctly fail on a truncated/error-page-sized response and on a
+right-sized-but-wrong-shape response.
+
 **Open items, not yet resolved:**
-- **The scheduled workflow's fetch step is a deliberate stub that fails
-  loudly** (`.github/workflows/refresh.yml`) - the exact URL/mechanism for
-  downloading a Yoruba-filtered slice of kaikki.org's data was not
-  confirmed during design. kaikki.org's per-language "editions" page
-  (`downloads/[lang]/[lang]-extract.jsonl`) is for separate non-English-
-  Wiktionary editions and does **not** include Yoruba; the existing
-  `dictionary-Yoruba.jsonl` was obtained via kaikki.org's per-word/
-  per-language query feature against its main English-Wiktionary dataset
-  (which updates "at least once a week" per kaikki.org's own docs) - the
-  precise URL for automating that needs confirming against
-  <https://kaikki.org/dictionary/Yoruba/> before the workflow can actually
-  run.
 - **Not yet integrated with either consumer.** `yorubadict`'s build hasn't
   been retargeted to consume this repo's artifact yet (still runs its own
   parser/normalizer). `yoruba_student_dict_platform`'s downstream ingestion
   step (the Postgres schema + componentCandidates/altOfTargets/
   standardForms derivation) hasn't been built yet either.
-- **Repo not yet pushed to GitHub** - created locally; needs a remote
-  linked the same way `yoruba_student_dict_platform` was.
+- **The workflow itself hasn't had a real scheduled/dispatched run yet** -
+  the fetch+sanity-check+normalize chain was verified by running each part
+  locally (see above), not by an actual GitHub Actions execution. Worth
+  triggering a manual `workflow_dispatch` run once pushed, to confirm the
+  release-publish step too.

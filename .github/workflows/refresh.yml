@@ -20,19 +20,57 @@ jobs:
 
       - name: Fetch latest Yoruba-filtered Kaikki extract
         run: |
-          # TODO (open item, see README): the exact download URL for a
-          # Yoruba-filtered slice of kaikki.org's main dataset was not
-          # confirmed during design - kaikki.org's per-language "editions"
-          # page (downloads/[lang]/[lang]-extract.jsonl) does NOT include
-          # Yoruba (that page is for separate non-English-Wiktionary
-          # editions). The current dictionary-Yoruba.jsonl in both
-          # yoruba-student-dict and yorubadict was obtained via kaikki.org's
-          # per-word/per-language query feature against the main
-          # English-Wiktionary dataset - confirm the exact URL/mechanism
-          # against https://kaikki.org/dictionary/Yoruba/ before relying on
-          # this step, then replace the placeholder below.
-          echo "::error::Fetch URL not yet confirmed - see TODO in this step" && exit 1
-          # curl -fsSL "<CONFIRM-AND-REPLACE>" -o data/dictionary-Yoruba.jsonl
+          # Confirmed live 2026-07-11: this is kaikki.org's own per-word/
+          # per-language JSONL download for Yoruba (linked from
+          # https://kaikki.org/dictionary/Yoruba/index.html), NOT the
+          # per-language "editions" pattern (downloads/[lang]/[lang]-
+          # extract.jsonl), which is for separate non-English-Wiktionary
+          # editions and doesn't include Yoruba at all. This is the exact
+          # same file both yoruba-student-dict's and yorubadict's existing
+          # dictionary-Yoruba.jsonl snapshots were manually downloaded from
+          # (byte count matches almost exactly).
+          #
+          # kaikki.org's own page marks this specific link "DEPRECATED -
+          # will be removed in the near future" in favor of a raw
+          # wiktextract-dump-based pipeline - if this step starts failing,
+          # check https://kaikki.org/dictionary/Yoruba/index.html and
+          # https://kaikki.org/dictionary/rawdata.html for its replacement
+          # before assuming it's a transient error.
+          curl -fsSL --max-time 120 \
+            "https://kaikki.org/dictionary/Yoruba/kaikki.org-dictionary-Yoruba.jsonl" \
+            -o data/dictionary-Yoruba.jsonl
+
+      - name: Sanity-check the fetched extract before normalizing
+        run: |
+          set -euo pipefail
+          size=$(wc -c < data/dictionary-Yoruba.jsonl)
+          lines=$(wc -l < data/dictionary-Yoruba.jsonl)
+          echo "Fetched ${size} bytes, ${lines} lines"
+
+          # A live endpoint returning 200 doesn't guarantee real content -
+          # an error page, an empty response, or a format change would
+          # otherwise flow straight into normalize.mjs and either crash
+          # confusingly or (worse) silently publish a near-empty artifact.
+          # Bounds are generous (current real file: ~10.7 MB, 6,273 lines)
+          # so a real future data-size change doesn't false-positive.
+          if [ "$size" -lt 5000000 ]; then
+            echo "::error::Fetched file is suspiciously small (${size} bytes) - refusing to normalize"
+            exit 1
+          fi
+          if [ "$lines" -lt 3000 ]; then
+            echo "::error::Fetched file has suspiciously few lines (${lines}) - refusing to normalize"
+            exit 1
+          fi
+
+          node -e "
+            const fs = require('node:fs');
+            const first = fs.readFileSync('data/dictionary-Yoruba.jsonl', 'utf8').split('\n').find(Boolean);
+            const record = JSON.parse(first);
+            if (!record.word || !record.lang_code) {
+              console.error('First record is missing expected fields (word/lang_code) - format may have changed');
+              process.exit(1);
+            }
+          "
 
       - name: Normalize
         run: node src/normalize.mjs data/dictionary-Yoruba.jsonl --source-date="$(date -u +%F)"
