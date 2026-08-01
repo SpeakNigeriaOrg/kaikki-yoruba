@@ -24,6 +24,7 @@
 // supplemented.
 
 import { allForms } from './orthography.mjs';
+import { classifyRelationList, EMPTY_MARKERS } from './relationDebris.mjs';
 
 // Templates whose numeric args decompose a word into its constituent
 // morphemes. "af"/"affix"/"prefix" were previously excluded entirely on
@@ -146,42 +147,39 @@ function extractEtymologyTemplates(record) {
   return templates.map((t) => ({ name: t.name || null, args: t.args || {} }));
 }
 
-// We now pass the raw page title (e.g., "ile") to build the correct URL
-function extractRelationList(list, pageTitle) {
+// A relation list is either a list of terms or the text of a rendered table -
+// never a mix. classifyRelationList decides which (see relationDebris.mjs for
+// why the decision is made per list rather than per item); table text is
+// dropped whole, because the data it mangles is imported from source instead
+// by dialectSynonyms.mjs.
+//
+// `english` and `translation` are the same string in all 2,065 items that
+// carry both, so the fallback is belt-and-braces rather than a real choice.
+// `lang`/`langCode` matter: 311 of 315 descendants are not Yoruba (English
+// "dodo", Nigerian Pidgin "werey"), and dropping the language made them render
+// as though they were.
+function extractRelationList(list, markers, onTableText) {
   if (!Array.isArray(list)) return [];
-  const results = [];
-  let addedFallback = false;
 
+  const verdict = classifyRelationList(list, markers);
+  if (verdict.isTableText) {
+    if (onTableText) onTableText(verdict);
+    return [];
+  }
+
+  const results = [];
   for (const item of list) {
     if (!item || typeof item.word !== 'string' || !item.word.trim()) continue;
-
-    const raw = item.word.trim();
-
-    // STRICTER FILTER: Catch mangled tables (庽), long notes (> 50 chars), or sentences (contains ". ")
-    if (raw.includes('庽') || raw.length > 50 || raw.includes('. ')) {
-      if (!addedFallback) {
-        // pageTitle matches the exact Wiktionary URL path (e.g., "ile")
-        const url = `https://en.wiktionary.org/wiki/${encodeURIComponent(pageTitle)}#Yoruba`;
-        
-        results.push({ 
-          type: 'external_link', 
-          url: url,
-          message: "View complex dialect data on Wiktionary",
-          text: "Dialect link" // Safety fallback so relationships.mjs doesn't crash on undefined
-        });
-        addedFallback = true;
-      }
-      continue; // Drop the academic garbage
-    }
-
-    // Standard, clean term
     results.push({
       type: 'term',
-      text: raw,
-      english: item.english || item.translation || null
+      text: item.word.trim(),
+      english: item.english || item.translation || null,
+      lang: item.lang || null,
+      langCode: item.lang_code || null,
+      roman: item.roman || null,
     });
   }
-  
+
   return results;
 }
 
@@ -205,13 +203,14 @@ function deriveEntryId(record, senses) {
   return `generated-${slug}-${record.pos || 'x'}-${idCounter}`;
 }
 
-export function normalizeRecord(record, index) {
+export function normalizeRecord(record, index, options = {}) {
   const senses = extractSenses(record);
   const canonicalForm = pickCanonicalForm(record);
   const id = deriveEntryId(record, senses);
 
-  // Use the raw Kaikki word (page title) for accurate Wiktionary linking
-  const pageTitle = record.word;
+  const markers = options.markers || EMPTY_MARKERS;
+  const relation = (list, field) =>
+    extractRelationList(list, markers, (verdict) => options.onTableText?.({ id, field, ...verdict }));
 
   const entry = {
     id,
@@ -227,12 +226,11 @@ export function normalizeRecord(record, index) {
     altForms: extractAltForms(record, canonicalForm.value),
     ipa: extractIpa(record),
     senses,
-    // Pass the pageTitle into our lists
-    derivedTerms: extractRelationList(record.derived, pageTitle),
-    relatedTerms: extractRelationList(record.related, pageTitle),
-    synonyms: extractRelationList(record.synonyms, pageTitle),
-    antonyms: extractRelationList(record.antonyms, pageTitle),
-    descendants: extractRelationList(record.descendants, pageTitle),
+    derivedTerms: relation(record.derived, 'derivedTerms'),
+    relatedTerms: relation(record.related, 'relatedTerms'),
+    synonyms: relation(record.synonyms, 'synonyms'),
+    antonyms: relation(record.antonyms, 'antonyms'),
+    descendants: relation(record.descendants, 'descendants'),
     forms: allForms(canonicalForm.value),
     provenance: {
       source: 'kaikki',
@@ -244,6 +242,6 @@ export function normalizeRecord(record, index) {
 }
 
 
-export function normalizeRecords(records) {
-  return records.map((record, i) => normalizeRecord(record, i));
+export function normalizeRecords(records, options = {}) {
+  return records.map((record, i) => normalizeRecord(record, i, options));
 }

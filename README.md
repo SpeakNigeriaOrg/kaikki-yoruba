@@ -195,11 +195,65 @@ compounds built from it this way).
 each downstream consumer, since (unlike morphemes) they're consumer-shaped
 concerns this repo has no opinion on.
 
+## Dialect synonyms - imported from source, because Kaikki's copy is unrecoverable
+
+Kaikki expands `{{dialect synonyms}}`, renders the resulting table, and
+flattens it to text - so every text run in it (caption, footnotes, body cells)
+arrives as a separate `synonyms` item, cells glued together by a separator. Of
+the 57 corpus entries that had any synonyms, **55 were table dumps**; exactly 2
+had a real synonym.
+
+The flattened form can't be repaired. The separator is an arbitrary Wiktionary
+page title substituted by an expansion-index desync, and it changes every build:
+
+| build | `ga` | `inu` | others that build |
+|---|---|---|---|
+| build-6 | `慵` | `SPACE SHUTTLE` | `UNITED ARAB EMIRATES`, `VIFÖ`, `FA`, `T` |
+| build-5 | `礀` | `啀` | `ACCRUAL`, `IPSE DIXIT`, `ROOK` |
+| build-2 | `荙` | `愑` | `PREDICATE`, `BELLY DANCE` |
+
+Some are Han ideographs, some plain ASCII, so no character rule catches them.
+The `includes('庽') || length > 50 || includes('. ')` filter this replaced
+missed 277 table items on the real corpus while deleting real content
+(bibliography entries like `T. A. (2021)`, example sentences).
+
+So we read the source instead:
+
+- **`src/fetch-dialect-synonyms.mjs`** enumerates `Module:dialect synonyms/yo/*`
+  (140 pages) and downloads them plus the variety metadata page in 3 batched API
+  requests, writing `data/dialect-synonyms.json`. Committed, so builds stay
+  offline and reproducible and a Wiktionary edit shows up as a reviewable diff.
+- **`src/lib/luaLiteral.mjs`** parses the restricted Lua subset those modules use
+  (literals only, max table depth 6). A real parser rather than regexes because
+  the variety tree's *depth* carries meaning - family > group > variety >
+  subdialect > location - and a data page's region key names the leaf.
+- **`src/lib/dialectSynonyms.mjs`** turns that into `entry.dialectSynonyms`:
+  `[{ gloss, senseId, sourcePage, groups: [{ family, group, varieties: [{ name,
+  display, terms: [{ term, gloss, qualifier }], lat, long }] }] }]` - 6,426
+  terms across 138 entries. Datasets are keyed by spelling, so homographs (`ga`
+  verb vs noun) and `id=`-qualified pages (`funfun/white`) are disambiguated by
+  gloss overlap, reusing `glossOverlapScore` from morpheme resolution.
+- **`src/lib/relationDebris.mjs`** then recognises the flattened tables without
+  guesswork: a relation list containing one of the table's own marker strings -
+  caption, footnote fragment, variety-group header, all read from that same
+  metadata module - *is* that table's text, and is dropped whole. Character and
+  length tests survive only as reported diagnostics, never as a drop rule:
+  dropping on non-Latin script would cost four legitimate descendants (Mandarin
+  `阿哥哥`, Japanese `イロコ`/`イディグボ`, Arabic `يُوفِي`) and every Ajami headword.
+
+If the snapshot is missing the build still succeeds and leaves relation lists
+unfiltered, so a fetch outage degrades rather than fails.
+
+Relation items now also carry `lang`/`langCode`/`roman`: 311 of 315
+`descendants` are not Yorùbá (English `dodo`, Nigerian Pidgin `werey`), and
+dropping the language made them render as though they were.
+
 ## Usage
 
 ```
 npm run build              # data/sample.jsonl -> dist/entries.json + dist/metadata.json
 npm run build:sample       # explicit alias for the above
+npm run fetch:dialects     # refresh data/dialect-synonyms.json from Wiktionary
 node src/normalize.mjs path/to/dictionary-Yoruba.jsonl --source-date=2026-07-06
 npm test                   # node --test - runs against both a synthetic
                             # fixture and (if present as a sibling checkout)

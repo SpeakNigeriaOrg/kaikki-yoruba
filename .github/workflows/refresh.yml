@@ -80,6 +80,39 @@ jobs:
             }
           "
 
+      # Wiktionary's dialect tables are read from source rather than salvaged
+      # from Kaikki's flattened rendering of them (src/lib/relationDebris.mjs
+      # explains why the flattened form is unrecoverable). Failure here is
+      # non-fatal: normalize.mjs falls back to the committed snapshot, and with
+      # no snapshot at all it leaves relation lists unfiltered, as before.
+      - name: Refresh the Wiktionary dialect-synonym snapshot
+        continue-on-error: true
+        run: node src/fetch-dialect-synonyms.mjs
+
+      - name: Sanity-check the dialect snapshot
+        run: |
+          set -euo pipefail
+          node -e "
+            const fs = require('node:fs');
+            const file = 'data/dialect-synonyms.json';
+            if (!fs.existsSync(file)) {
+              console.log('::warning::No dialect snapshot - relation lists will not be filtered');
+              process.exit(0);
+            }
+            const snapshot = JSON.parse(fs.readFileSync(file, 'utf8'));
+            // Currently 140. A collapse toward zero means the module was moved
+            // or renamed upstream, which would silently stop both the import
+            // and the table filtering that depends on its marker strings.
+            if (snapshot.pages.length < 100) {
+              console.error('Only ' + snapshot.pages.length + ' dialect data pages - the module may have moved');
+              process.exit(1);
+            }
+            if (!/export\.varieties/.test(snapshot.metadataContent)) {
+              console.error('Metadata module has no export.varieties - format may have changed');
+              process.exit(1);
+            }
+          "
+
       - name: Normalize
         run: node src/normalize.mjs data/dictionary-Yoruba.jsonl --source-date="$(date -u +%F)"
 
@@ -91,3 +124,4 @@ jobs:
           files: |
             dist/entries.json
             dist/metadata.json
+            data/dialect-synonyms.json

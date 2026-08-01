@@ -25,13 +25,15 @@
 //                          contentHash, sourceDate (if provided)
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { parseJsonl } from './lib/parser.mjs';
 import { normalizeRecords } from './lib/normalizer.mjs';
 import { resolveMorphemeRelationships } from './lib/morphemeResolution.mjs';
+import { attachDialectSynonyms, buildDialectSets, parseVarietyMetadata } from './lib/dialectSynonyms.mjs';
+import { buildTableMarkers, EMPTY_MARKERS } from './lib/relationDebris.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -46,6 +48,16 @@ const inputPath = positional[0] ? path.resolve(process.cwd(), positional[0]) : p
 const outDir = path.join(rootDir, 'dist');
 const outEntriesPath = path.join(outDir, 'entries.json');
 const outMetadataPath = path.join(outDir, 'metadata.json');
+const dialectSnapshotPath = path.join(rootDir, 'data', 'dialect-synonyms.json');
+
+// The snapshot is written by src/fetch-dialect-synonyms.mjs and committed, so
+// the build stays offline and reproducible. Without it the build still
+// succeeds - relation lists just keep the flattened table text, exactly as
+// before this feature - so a fetch outage degrades rather than fails.
+function loadDialectSnapshot() {
+  if (!existsSync(dialectSnapshotPath)) return null;
+  return JSON.parse(readFileSync(dialectSnapshotPath, 'utf8'));
+}
 
 function main() {
   console.log(`[1/3] Parsing ${path.relative(rootDir, inputPath)} ...`);
@@ -57,11 +69,47 @@ function main() {
     }
   }
 
-  console.log('[2/3] Normalizing records into canonical entries ...');
-  const entries = normalizeRecords(records);
+  const snapshot = loadDialectSnapshot();
+  let dialectMetadata = null;
+  let dialectSets = [];
+  if (snapshot) {
+    dialectMetadata = parseVarietyMetadata(snapshot.metadataContent);
+    const built = buildDialectSets(snapshot.pages, dialectMetadata);
+    dialectSets = built.sets;
+    console.log(
+      `[2/4] Dialect source: ${dialectSets.length} datasets, ` +
+        `${dialectSets.reduce((n, s) => n + s.termCount, 0)} terms, ` +
+        `${dialectMetadata.varieties.size} varieties indexed`
+    );
+    for (const warning of built.warnings) console.log(`      warning: ${JSON.stringify(warning)}`);
+  } else {
+    console.log(`[2/4] Dialect source: ${path.relative(rootDir, dialectSnapshotPath)} absent - skipping`);
+  }
 
-  console.log('[3/3] Resolving etymology-morpheme relationships ...');
+  console.log('[3/4] Normalizing records into canonical entries ...');
+  const tableTextDrops = [];
+  const entries = normalizeRecords(records, {
+    markers: dialectMetadata ? buildTableMarkers(dialectMetadata) : EMPTY_MARKERS,
+    onTableText: (drop) => tableTextDrops.push(drop),
+  });
+  const droppedFields = new Map();
+  for (const drop of tableTextDrops) droppedFields.set(drop.field, (droppedFields.get(drop.field) || 0) + 1);
+  console.log(
+    `      dropped ${tableTextDrops.length} rendered-table relation list(s)` +
+      (droppedFields.size ? ` (${[...droppedFields].map(([f, n]) => `${f} ${n}`).join(', ')})` : '')
+  );
+
+  console.log('[4/4] Resolving etymology-morpheme and dialect relationships ...');
   resolveMorphemeRelationships(entries);
+  const dialectReport = attachDialectSynonyms(entries, dialectSets);
+  console.log(
+    `      dialect sets attached to ${dialectReport.attached}/${dialectReport.datasets} entries` +
+      (dialectReport.unmatched.length ? `, ${dialectReport.unmatched.length} unmatched` : '')
+  );
+  for (const miss of dialectReport.unmatched) console.log(`      unmatched: ${miss.page}`);
+  for (const amb of dialectReport.ambiguous) {
+    console.log(`      ambiguous: ${amb.page} -> ${amb.chose} (of ${amb.candidates.length}, gloss overlap ${amb.glossOverlap})`);
+  }
 
   // Entries are shipped as an id-keyed object for O(1) lookup, matching
   // yorubadict's own convention for its equivalent artifact.

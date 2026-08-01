@@ -43,7 +43,9 @@ function normalizeGlossWords(text) {
 // morpheme's own gloss text - used to break ties among entries that are
 // exact spelling/tone matches (true homographs, e.g. 3 senses of "gbà"),
 // where spelling alone can't say which one an etymology template meant.
-function glossOverlapScore(morphemeGloss, entry) {
+// Exported because dialect-synonym attachment faces the identical problem:
+// a data page is keyed by spelling, so "ga" alone can't say verb or noun.
+export function glossOverlapScore(morphemeGloss, entry) {
   if (!morphemeGloss) return 0;
   const mWords = normalizeGlossWords(morphemeGloss);
   let best = 0;
