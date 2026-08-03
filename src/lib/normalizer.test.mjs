@@ -120,6 +120,47 @@ test('normalizeRecord recognizes af/affix/prefix templates for etymologyMorpheme
   }
 });
 
+test('normalizeRecord reads {{reduplication}} as a single-term template (arg 3 is display text, arg 4/t is a gloss)', () => {
+  // wówó "mushroom" - the common shape: arg 3 repeats arg 2, gloss in |t=.
+  // Read as multi-term this produced two identical "wó" morphemes, both with
+  // a null gloss, because the gloss was looked up as t1.
+  const repeated = normalizeRecord({
+    word: 'wówó', pos: 'noun', senses: [{ id: 's1', glosses: ['mushroom'] }],
+    etymology_templates: [{ name: 'reduplication', args: { 1: 'yo', 2: 'wó', 3: 'wó', t: 'to crumble, to break' } }],
+  }, 0);
+  assert.deepEqual(repeated.etymologyMorphemes, [
+    { form: 'wó', gloss: 'to crumble, to break', bound: false },
+  ]);
+
+  // dáadáa - positional |4= gloss with an empty |3=. Read as multi-term this
+  // emitted a morpheme whose *form* was the English string "to be good".
+  const positional = normalizeRecord({
+    word: 'dáadáa', pos: 'adv', senses: [{ id: 's1', glosses: ['well'] }],
+    etymology_templates: [{ name: 'reduplication', args: { 1: 'yo', 2: 'dáa', 3: '', 4: 'to be good' } }],
+  }, 0);
+  assert.deepEqual(positional.etymologyMorphemes, [
+    { form: 'dáa', gloss: 'to be good', bound: false },
+  ]);
+
+  // No gloss supplied at all is still one morpheme, not two.
+  const bare = normalizeRecord({
+    word: 'pẹtẹpẹtẹ', pos: 'noun', senses: [{ id: 's1', glosses: ['mud'] }],
+    etymology_templates: [{ name: 'reduplication', args: { 1: 'yo', 2: 'pẹtẹ', 3: 'pẹtẹ' } }],
+  }, 0);
+  assert.deepEqual(bare.etymologyMorphemes, [{ form: 'pẹtẹ', gloss: null, bound: false }]);
+});
+
+test('normalizeRecord still reads multi-term templates positionally (the single-term branch must not leak into them)', () => {
+  const entry = normalizeRecord({
+    word: 'x', pos: 'noun', senses: [{ id: 's1', glosses: ['thing'] }],
+    etymology_templates: [{ name: 'compound', args: { 1: 'yo', 2: 'a', 3: 'b', t1: 'first', t2: 'second' } }],
+  }, 0);
+  assert.deepEqual(entry.etymologyMorphemes, [
+    { form: 'a', gloss: 'first', bound: false },
+    { form: 'b', gloss: 'second', bound: false },
+  ]);
+});
+
 test('normalizeRecord excludes cross-language templates from etymologyMorphemes (numeric arg is a language code, not a Yoruba word)', () => {
   const record = {
     word: 'x', pos: 'noun', senses: [{ id: 's1', glosses: ['thing'] }],

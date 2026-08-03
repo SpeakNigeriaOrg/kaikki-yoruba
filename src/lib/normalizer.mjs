@@ -43,6 +43,28 @@ const MORPHEME_TEMPLATE_NAMES = new Set([
   'af', 'affix', 'prefix',
 ]);
 
+// {{reduplication}} does NOT follow the multi-term shape the rest of that set
+// does, and reading it as if it did was corrupting every one of the 93 in the
+// corpus. Per Wiktionary's own template documentation it takes ONE term:
+//
+//   |1=  language code
+//   |2=  the term this word was reduplicated from
+//   |3=  alternate display text for that same term (NOT a second morpheme)
+//   |4=  a gloss, also spellable as |t=  (NOT a third morpheme)
+//
+// Read as a multi-term template that meant: wówó "mushroom"
+// ({{reduplication|yo|wó|wó|t=to crumble, to break}}) decomposed into two
+// identical "wó" morphemes with their gloss dropped, because the gloss was
+// looked up as t1; and dáadáa ({{reduplication|yo|dáa||4=to be good}})
+// produced a morpheme whose *form* was the English string "to be good".
+// Kaikki's own rendered `expansion` confirms the single-term reading:
+// "Reduplication of wó (“to crumble, to break”)".
+//
+// Losing those glosses mattered beyond the display: gloss overlap is the only
+// signal that picks between identically-spelled roots, and reduplications are
+// exactly where several compete (gbígbá is listed under all five gbá verbs).
+const SINGLE_TERM_MORPHEME_TEMPLATES = new Set(['reduplication']);
+
 /** Extracts every morpheme a word's etymology_templates decompose it
  * into, tagging each as bound (a grammatical prefix/suffix like à-, ẹ- -
  * never an independent word) or free (a real word, potentially already in
@@ -57,6 +79,22 @@ function extractEtymologyMorphemes(record) {
     if (!MORPHEME_TEMPLATE_NAMES.has(t.name)) continue;
     const args = t.args || {};
     if (args['1'] !== 'yo') continue;
+
+    // Single-term templates: one morpheme, arg 3 being display text for the
+    // same term rather than another of them. Preferred over arg 2 when it's
+    // present and non-empty, since an editor who bothered to supply it
+    // usually did so to give the properly-toned form.
+    if (SINGLE_TERM_MORPHEME_TEMPLATES.has(t.name)) {
+      const form = args['3'] || args['2'];
+      if (!form) continue;
+      morphemes.push({
+        form,
+        gloss: args.t || args['4'] || null,
+        bound: form.startsWith('-') || form.endsWith('-'),
+      });
+      continue;
+    }
+
     const numericKeys = Object.keys(args)
       .filter((k) => /^\d+$/.test(k) && k !== '1')
       .sort((a, b) => Number(a) - Number(b));
