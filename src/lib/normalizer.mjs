@@ -75,10 +75,21 @@ const SINGLE_TERM_MORPHEME_TEMPLATES = new Set(['reduplication']);
 function extractEtymologyMorphemes(record) {
   const templates = Array.isArray(record.etymology_templates) ? record.etymology_templates : [];
   const morphemes = [];
+  // Which decomposition each morpheme came from. A page can record more than
+  // one way of breaking the same word down - 81 in the corpus do - and they
+  // are alternatives, not parts of a single longer analysis. nìtorí is
+  // ní + ìtorí *or* ní + ti + orí; mùwé is mọ̀ + ùwé in Èkìtì/Oǹdó *or*
+  // mù + ùwé in Ìjẹ̀bú. Returned flat, they read as one four-part word
+  // ("mọ̀ + ùwé + mù + ùwé"), which is not a thing anyone said. Consumers
+  // need the grouping to render them as the alternatives they are, and it
+  // has to come from here: it is only knowable while the templates are being
+  // walked, and re-deriving it downstream would mean copying these rules.
+  let analysis = -1;
   for (const t of templates) {
     if (!MORPHEME_TEMPLATE_NAMES.has(t.name)) continue;
     const args = t.args || {};
     if (args['1'] !== 'yo') continue;
+    analysis += 1;
 
     // Single-term templates: one morpheme, arg 3 being display text for the
     // same term rather than another of them. Preferred over arg 2 when it's
@@ -91,6 +102,8 @@ function extractEtymologyMorphemes(record) {
         form,
         gloss: args.t || args['4'] || null,
         bound: form.startsWith('-') || form.endsWith('-'),
+        analysis,
+        analysisTemplate: t.name,
       });
       continue;
     }
@@ -106,7 +119,13 @@ function extractEtymologyMorphemes(record) {
       // data: àmọ̀tẹ́kùn's 5 morphemes are args 2-6, but their glosses are
       // t1-t5 (one per morpheme, in order), not t2-t6.
       const gloss = args[`t${i + 1}`] || null;
-      morphemes.push({ form, gloss, bound: form.startsWith('-') || form.endsWith('-') });
+      morphemes.push({
+        form,
+        gloss,
+        bound: form.startsWith('-') || form.endsWith('-'),
+        analysis,
+        analysisTemplate: t.name,
+      });
     });
   }
   return morphemes;

@@ -101,11 +101,11 @@ test('normalizeRecord extracts etymologyMorphemes, tagging bound vs free per-mor
   };
   const entry = normalizeRecord(record, 0);
   assert.deepEqual(entry.etymologyMorphemes, [
-    { form: 'à-', gloss: 'nominalizing prefix', bound: true },
-    { form: 'mọ̀', gloss: 'to know', bound: false },
-    { form: 'tó', gloss: 'that', bound: false },
-    { form: 'tó', gloss: 'is equal to, similar to', bound: false },
-    { form: 'ẹkùn', gloss: 'leopard', bound: false },
+    { form: 'à-', gloss: 'nominalizing prefix', bound: true, analysis: 0, analysisTemplate: 'af' },
+    { form: 'mọ̀', gloss: 'to know', bound: false, analysis: 0, analysisTemplate: 'af' },
+    { form: 'tó', gloss: 'that', bound: false, analysis: 0, analysisTemplate: 'af' },
+    { form: 'tó', gloss: 'is equal to, similar to', bound: false, analysis: 0, analysisTemplate: 'af' },
+    { form: 'ẹkùn', gloss: 'leopard', bound: false, analysis: 0, analysisTemplate: 'af' },
   ]);
 });
 
@@ -129,7 +129,7 @@ test('normalizeRecord reads {{reduplication}} as a single-term template (arg 3 i
     etymology_templates: [{ name: 'reduplication', args: { 1: 'yo', 2: 'wó', 3: 'wó', t: 'to crumble, to break' } }],
   }, 0);
   assert.deepEqual(repeated.etymologyMorphemes, [
-    { form: 'wó', gloss: 'to crumble, to break', bound: false },
+    { form: 'wó', gloss: 'to crumble, to break', bound: false, analysis: 0, analysisTemplate: 'reduplication' },
   ]);
 
   // dáadáa - positional |4= gloss with an empty |3=. Read as multi-term this
@@ -139,7 +139,7 @@ test('normalizeRecord reads {{reduplication}} as a single-term template (arg 3 i
     etymology_templates: [{ name: 'reduplication', args: { 1: 'yo', 2: 'dáa', 3: '', 4: 'to be good' } }],
   }, 0);
   assert.deepEqual(positional.etymologyMorphemes, [
-    { form: 'dáa', gloss: 'to be good', bound: false },
+    { form: 'dáa', gloss: 'to be good', bound: false, analysis: 0, analysisTemplate: 'reduplication' },
   ]);
 
   // No gloss supplied at all is still one morpheme, not two.
@@ -147,7 +147,9 @@ test('normalizeRecord reads {{reduplication}} as a single-term template (arg 3 i
     word: 'pẹtẹpẹtẹ', pos: 'noun', senses: [{ id: 's1', glosses: ['mud'] }],
     etymology_templates: [{ name: 'reduplication', args: { 1: 'yo', 2: 'pẹtẹ', 3: 'pẹtẹ' } }],
   }, 0);
-  assert.deepEqual(bare.etymologyMorphemes, [{ form: 'pẹtẹ', gloss: null, bound: false }]);
+  assert.deepEqual(bare.etymologyMorphemes, [
+    { form: 'pẹtẹ', gloss: null, bound: false, analysis: 0, analysisTemplate: 'reduplication' },
+  ]);
 });
 
 test('normalizeRecord still reads multi-term templates positionally (the single-term branch must not leak into them)', () => {
@@ -156,9 +158,36 @@ test('normalizeRecord still reads multi-term templates positionally (the single-
     etymology_templates: [{ name: 'compound', args: { 1: 'yo', 2: 'a', 3: 'b', t1: 'first', t2: 'second' } }],
   }, 0);
   assert.deepEqual(entry.etymologyMorphemes, [
-    { form: 'a', gloss: 'first', bound: false },
-    { form: 'b', gloss: 'second', bound: false },
+    { form: 'a', gloss: 'first', bound: false, analysis: 0, analysisTemplate: 'compound' },
+    { form: 'b', gloss: 'second', bound: false, analysis: 0, analysisTemplate: 'compound' },
   ]);
+});
+
+test('normalizeRecord groups etymologyMorphemes by decomposition, so competing analyses stay apart', () => {
+  // nìtorí: Wiktionary records two ways of breaking the same word down. Flat,
+  // they read as one four-part word; they are alternatives.
+  const entry = normalizeRecord({
+    word: 'nítorí', pos: 'prep', senses: [{ id: 's1', glosses: ['because of'] }],
+    etymology_templates: [
+      { name: 'compound', args: { 1: 'yo', 2: 'ní', 3: 'ìtorí' } },
+      { name: 'compound', args: { 1: 'yo', 2: 'ní', 3: 'ti', 4: 'orí', t1: 'on, at', t2: 'of', t3: 'head, reason' } },
+    ],
+  }, 0);
+  assert.deepEqual(
+    entry.etymologyMorphemes.map((m) => [m.analysis, m.form]),
+    [[0, 'ní'], [0, 'ìtorí'], [1, 'ní'], [1, 'ti'], [1, 'orí']]
+  );
+
+  // Templates that produce no morphemes must not consume an analysis number,
+  // or the groups downstream come out sparse and misnumbered.
+  const skipped = normalizeRecord({
+    word: 'x', pos: 'noun', senses: [{ id: 's1', glosses: ['thing'] }],
+    etymology_templates: [
+      { name: 'cog', args: { 1: 'ig', 2: 'something' } },
+      { name: 'compound', args: { 1: 'yo', 2: 'a', 3: 'b' } },
+    ],
+  }, 0);
+  assert.deepEqual(skipped.etymologyMorphemes.map((m) => m.analysis), [0, 0]);
 });
 
 test('normalizeRecord excludes cross-language templates from etymologyMorphemes (numeric arg is a language code, not a Yoruba word)', () => {
