@@ -168,28 +168,86 @@ function extractIpa(record) {
     .map((s) => ({ ipa: s.ipa, tags: s.tags || [], note: s.note || null }));
 }
 
-function extractSenses(record) {
+// Wiktionary attaches relation lists to individual DEFINITIONS as often as to
+// the word as a whole, and until this was added only the entry-level ones were
+// read. The sense-level lists were the overwhelming majority of the data:
+//
+//   sense synonyms         6,064 items on 2,664 senses / 2,062 headwords
+//   sense derived          2,814        entry-level equivalent:   661 records
+//   sense related          1,888                                  169 records
+//   sense antonyms           112                                    0 records
+//   sense coordinate_terms   101
+//   sense hyponyms            95
+//   sense hypernyms           10
+//
+// 11,084 items, against 57 entry-level synonym records - of which 55 were
+// flattened table text, leaving exactly two real ones in the whole dictionary.
+// So yorubadict shipped a Synonyms section that rendered for 2 of 6,272 entries
+// and an Antonyms section that never rendered at all, while the words a reader
+// wanted sat one level down in the source the entire time.
+//
+// The source keys are mapped onto the entry-level NAMES (derived ->
+// derivedTerms, and so on) so a consumer can drive resolution and rendering
+// from one field list instead of carrying two vocabularies for one concept.
+const SENSE_RELATION_FIELDS = {
+  synonyms: 'synonyms',
+  antonyms: 'antonyms',
+  derived: 'derivedTerms',
+  related: 'relatedTerms',
+  coordinate_terms: 'coordinateTerms',
+  hyponyms: 'hyponyms',
+  hypernyms: 'hypernyms',
+};
+
+/** The names those lists carry on a normalized sense, in render order.
+ *
+ * Exported so a consumer resolves and renders them from this list rather than
+ * hardcoding its own copy - which is how the entry level ended up with three
+ * fields nobody had ever wired up. */
+export const SENSE_RELATION_FIELD_NAMES = Object.values(SENSE_RELATION_FIELDS);
+
+// `senseRelation` is extractRelationList bound to this record's markers and
+// drop reporter - passed in rather than rebuilt here so the table-text verdict
+// is the same code at both levels. See normalizeRecord.
+function extractSenses(record, senseRelation) {
   const senses = Array.isArray(record.senses) ? record.senses : [];
-  return senses.map((sense) => ({
-    id: sense.id || null,
-    glosses: sense.glosses || [],
-    rawGlosses: sense.raw_glosses || sense.glosses || [],
-    tags: sense.tags || [],
-    examples: (sense.examples || []).map((ex) => ({
-      text: ex.text || null,
-      translation: ex.translation || ex.english || null,
-    })),
-    // Some senses carry their own nested relation lists (e.g. a
-    // sense-specific "derived" list distinct from the entry-level one).
-    // We fold these into the sense so nothing from the source is lost.
-    links: (sense.links || []).map((l) => (Array.isArray(l) ? l[0] : l)),
-    // Raw Kaikki cross-reference data ("this sense is an inflected/
-    // alternative form of X") - not extracted by yorubadict's original
-    // normalizer, added for yoruba_student_dict_platform's altOfTargets
-    // derivation (see generate_diagnostics.py's resolve_definition_source,
-    // which follows this one hop to find the real defining record).
-    altOf: (sense.alt_of || []).map((a) => ({ word: a.word || null, extra: a.extra || null })),
-  }));
+  return senses.map((sense, senseIndex) => {
+    const out = {
+      id: sense.id || null,
+      glosses: sense.glosses || [],
+      rawGlosses: sense.raw_glosses || sense.glosses || [],
+      tags: sense.tags || [],
+      examples: (sense.examples || []).map((ex) => ({
+        text: ex.text || null,
+        translation: ex.translation || ex.english || null,
+      })),
+      // Bare link strings wiktextract emits per sense. Kept raw; nothing
+      // resolves them, and nothing renders them as links.
+      links: (sense.links || []).map((l) => (Array.isArray(l) ? l[0] : l)),
+      // Raw Kaikki cross-reference data ("this sense is an inflected/
+      // alternative form of X") - not extracted by yorubadict's original
+      // normalizer, added for yoruba_student_dict_platform's altOfTargets
+      // derivation (see generate_diagnostics.py's resolve_definition_source,
+      // which follows this one hop to find the real defining record).
+      altOf: (sense.alt_of || []).map((a) => ({ word: a.word || null, extra: a.extra || null })),
+    };
+
+    // Every field is emitted even when empty, matching examples/altOf above:
+    // the artifact is a contract read by two consumers, and `sense.synonyms
+    // .length` should not need a guard on the other side. yorubadict's browser
+    // artifact drops the empty ones on its way out, where size is what matters.
+    //
+    // A sense list is classified and dropped whole exactly as an entry-level
+    // one is, because the table-text verdict is a property of the list rather
+    // than of any item in it - see relationDebris.mjs. That filter removes
+    // 1,738 items here, including the ẹṣin "horse" list, where variety names,
+    // family names and a bare "-" placeholder arrive as peer items alongside
+    // real terms.
+    for (const [sourceKey, field] of Object.entries(SENSE_RELATION_FIELDS)) {
+      out[field] = senseRelation(sense[sourceKey], field, senseIndex);
+    }
+    return out;
+  });
 }
 
 // Raw Kaikki etymology-template data ("this word's etymology section cites
@@ -242,11 +300,18 @@ function extractRelationList(list, markers, onTableText) {
 
 let idCounter = 0;
 
-function deriveEntryId(record, senses) {
+// Reads the RAW record rather than the normalized senses, so the id is
+// available before extractSenses runs. That ordering matters: extractSenses now
+// needs a reporter closure that names the entry it is reporting about, and the
+// closure needs the id. The two look mutually dependent and are not - the only
+// thing this ever read out of a normalized sense was `id`, which extractSenses
+// copies across verbatim as `sense.id || null`, so both spellings pick the same
+// sense and produce the same string.
+function deriveEntryId(record) {
   // Prefer the first sense's Kaikki-assigned id: it's already a stable,
   // source-derived identifier that doesn't depend on our own spelling
   // normalization decisions.
-  const firstSenseId = senses.find((s) => s.id)?.id;
+  const firstSenseId = (Array.isArray(record.senses) ? record.senses : []).find((s) => s.id)?.id;
   if (firstSenseId) return firstSenseId;
 
   // Fallback for records with no sense id at all (shouldn't normally
@@ -261,13 +326,21 @@ function deriveEntryId(record, senses) {
 }
 
 export function normalizeRecord(record, index, options = {}) {
-  const senses = extractSenses(record);
   const canonicalForm = pickCanonicalForm(record);
-  const id = deriveEntryId(record, senses);
+  const id = deriveEntryId(record);
 
   const markers = options.markers || EMPTY_MARKERS;
   const relation = (list, field) =>
     extractRelationList(list, markers, (verdict) => options.onTableText?.({ id, field, ...verdict }));
+  // `field` stays index-free ("sense synonyms", not "sense synonyms[3]") because
+  // normalize.mjs tallies drops by field name for its one-line summary; folding
+  // the index into the label would turn that line into hundreds of buckets. The
+  // index rides along as its own key for anyone who wants it.
+  const senseRelation = (list, field, senseIndex) =>
+    extractRelationList(list, markers, (verdict) =>
+      options.onTableText?.({ id, field: `sense ${field}`, senseIndex, ...verdict })
+    );
+  const senses = extractSenses(record, senseRelation);
 
   const entry = {
     id,
@@ -288,6 +361,12 @@ export function normalizeRecord(record, index, options = {}) {
     synonyms: relation(record.synonyms, 'synonyms'),
     antonyms: relation(record.antonyms, 'antonyms'),
     descendants: relation(record.descendants, 'descendants'),
+    // Small (33/14/19 items across 15/3/1 records) and dropped until now for no
+    // reason beyond never having been listed. Named the same as their
+    // sense-level counterparts so one field list drives both levels.
+    coordinateTerms: relation(record.coordinate_terms, 'coordinateTerms'),
+    hyponyms: relation(record.hyponyms, 'hyponyms'),
+    hypernyms: relation(record.hypernyms, 'hypernyms'),
     forms: allForms(canonicalForm.value),
     provenance: {
       source: 'kaikki',
