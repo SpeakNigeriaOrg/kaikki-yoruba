@@ -45,7 +45,9 @@ becomes this repo's normalized entry:
   "canonicalForm": { "value": "A", "inferenceMethod": "fallback_headword", "confidence": 0.5, "originalValue": "A" },
   "altForms": [{ "form": "a", "tags": ["lowercase"] }],
   "ipa": [{ "ipa": "/a/", "tags": ["phoneme"], "note": null }],
-  "senses": [{ "glosses": ["The first letter of the Yoruba alphabet..."], "tags": ["letter", "uppercase"], "examples": [], "altOf": [] }],
+  "senses": [{ "glosses": ["The first letter of the Yoruba alphabet..."], "tags": ["letter", "uppercase"], "examples": [], "altOf": [],
+               "synonyms": [], "antonyms": [], "derivedTerms": [], "relatedTerms": [],
+               "coordinateTerms": [], "hyponyms": [], "hypernyms": [] }],
   "derivedTerms": [], "relatedTerms": [], "synonyms": [], "antonyms": [], "descendants": [],
   "etymologyMorphemes": [],
   "usedInCompounds": [],
@@ -118,6 +120,24 @@ shared foundation. Extended with a few additions:
 - `senses[].altOf: [{word, extra}]` - raw `alt_of`, needed downstream for
   `yoruba_student_dict_platform`'s `altOfTargets` (cross-reference
   following) derivation. Same as above, raw preservation only.
+- **`senses[].{synonyms,antonyms,derivedTerms,relatedTerms,coordinateTerms,
+  hyponyms,hypernyms}`** - Wiktionary attaches relation lists to individual
+  definitions at least as often as to the word as a whole, and only the
+  entry-level ones were being read. The sense-level lists are most of the
+  data: 6,064 synonym items on 2,062 headwords against 57 entry-level
+  synonym records, plus derived (2,814), related (1,888), antonyms (112 -
+  against **zero** at entry level), coordinate terms (101), hyponyms (95)
+  and hypernyms (10). 11,084 items, reaching neither consumer.
+
+  Raw preservation, like the two above: the same `extractRelationList` runs
+  per sense per field, so the item shape and the table-text verdict are one
+  implementation across both levels, and cross-entry *resolution* stays
+  downstream where it always was. Source keys are mapped onto the
+  entry-level names (`derived` → `derivedTerms`) so a consumer can drive
+  resolution and rendering from one field list;
+  `SENSE_RELATION_FIELD_NAMES` is exported for that. The entry-level
+  `coordinate_terms`/`hyponyms`/`hypernyms` are now extracted too - they
+  were in the source and simply never listed.
 - `etymologyMorphemes`/`usedInCompounds` - **not** raw preservation; see
   the next section.
 
@@ -305,7 +325,15 @@ against the real corpus too, with an exact parity check against
 `yorubadict`'s own independently-run pipeline for known examples
 (`àmọ̀tẹ́kùn`'s 5-morpheme decomposition, `mọ̀` "to know"'s 34 real
 `usedInCompounds`, `Mọgbà`'s `gbà` morpheme correctly gloss-tiebreaking to
-the "to accept" sense) - byte-identical results. 21/21 tests passing
+the "to accept" sense) - byte-identical results.
+
+Sense-level relation lists added and verified against the real corpus: 11,084
+items in the source, 9,346 surviving the table-text filter, across 3,655
+senses on 3,338 records - 53% of the dictionary. The `deriveEntryId` refactor
+that made room for it (reading the raw record rather than the normalized
+senses, so the drop reporter can be built first) was checked by diffing the
+whole artifact before and after: the entry-id set is identical and no
+pre-existing field changed on any of the 6,272 entries. 52/52 tests passing
 (`node --test`).
 
 **Resolved since the initial scaffold**: the fetch URL is confirmed live -
